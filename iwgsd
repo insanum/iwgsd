@@ -1,0 +1,281 @@
+#!/usr/bin/env node
+
+var version = "v0.1";
+var author  = "Eric Davis <https://github.com/insanum>"
+
+var os     = require('os')
+var fs     = require('fs')
+var path   = require('path')
+var _      = require('lodash')
+var yaml   = require('js-yaml')
+var chalk  = require('chalk')
+var ap     = require('argparse')
+var moment = require('moment')
+var spawn  = require('cross-spawn');
+
+var cl  = (msg) => { console.log(msg); };
+var err = (msg) => { cl(chalk.red(`ERROR: ${msg}`)); process.exit(1); }
+
+var iwgsd_cfg = 'iwgsd.yaml';
+
+var cmd = path.basename(process.argv[1]);
+
+var pargs = new ap.ArgumentParser({ version: version });
+
+pargs.addArgument('-c',
+                  {
+                      nargs: 1,
+                      metavar: "<config.yaml>",
+                      help: "Config file (default './iwgsd.yaml')."
+                  });
+pargs.addArgument('-x',
+                  {
+                      action: "storeTrue",
+                      help: "Include list items marked as done."
+                  });
+pargs.addArgument('-L',
+                  {
+                      action: "storeTrue",
+                      help: "List all locations."
+                  });
+pargs.addArgument('-l',
+                  {
+                      nargs: 1,
+                      action: "append",
+                      metavar: "<location>",
+                      help: "Filter on location."
+                  });
+pargs.addArgument('-T',
+                  {
+                      action: "storeTrue",
+                      help: "List all tags."
+                  });
+pargs.addArgument('-t',
+                  {
+                      nargs: 1,
+                      action: "append",
+                      metavar: "<tag>",
+                      help: "Filter on tag."
+                  });
+pargs.addArgument('-N',
+                  {
+                      action: "storeTrue",
+                      help: "List notifications (dry run for '-n')."
+                  });
+pargs.addArgument('-n',
+                  {
+                      action: "storeTrue",
+                      help: "Send notifications."
+                  });
+
+var args = pargs.parseArgs();
+
+var notification_app = `${process.env.HOME}/pushover_iwgsd`;
+
+function parseFile(fname, ext = path.extname(fname)) {
+    if (ext !== ".yaml")
+        err(`File '${fname}' must be a YAML file`);
+    if (!fs.existsSync(fname))
+        err(`File '${fname}' does not exist`);
+    var options = { json: true };
+    return yaml.load(fs.readFileSync(fname, "utf-8"), options);
+}
+
+if (args.c)
+    iwgsd_cfg = args.c;
+
+var iwgsd = parseFile(iwgsd_cfg);
+
+var task_complete = '[x]';
+var rgx_list_item = /^\s*([-*+]|\d\.)(?:\s+(\[[ x]\]))?\s+.*$/;
+var rgx_location  = /\s@(\w+)(?=\s|$)/g;
+var rgx_tag       = /\s#(\w+)(?=\s|$)/g;
+var rgx_date      = /\s{(?:([-*+])\s)?(\d{4}-\d{2}-\d{2})(?:\s(\d{2}:\d{2}))?(?:\s\+(\d+)([hdwmy]))?}(?=\s|$)/g;
+
+var locations = [ ];
+function getLocations(lines) {
+    _.forEach(lines, function (line) {
+        if (!line.match(rgx_list_item)) return;
+        var loc_match;
+        while ((loc_match = rgx_location.exec(line)) !== null) {
+            locations.push(loc_match[1]);
+        }
+    });
+}
+
+var location_filter = [ ];
+function filterLocations(lines, locations) {
+    _.forEach(lines, function (line) {
+        var list_match = line.match(rgx_list_item);
+        if (!list_match || (!args.x && (list_match[2] === task_complete)))
+            return;
+        _.forEach(locations, function (loc) {
+            if (line.match(RegExp(`\\s@${loc}(\\b|$)`))) {
+                location_filter.push(_.trim(line));
+                return false;
+            }
+        });
+    });
+}
+
+var tags = [ ];
+function getTags(lines) {
+    _.forEach(lines, function (line) {
+        if (!line.match(rgx_list_item)) return;
+        var tag_match;
+        while ((tag_match = rgx_tag.exec(line)) !== null) {
+            tags.push(tag_match[1]);
+        }
+    });
+}
+
+var tag_filter = [ ];
+function filterTags(lines, tags) {
+    _.forEach(lines, function (line) {
+        var list_match = line.match(rgx_list_item);
+        if (!list_match || (!args.x && (list_match[2] === task_complete)))
+            return;
+        _.forEach(tags, function (tag) {
+            if (line.match(RegExp(`\\s#${tag}(\\b|$)`))) {
+                tag_filter.push(_.trim(line));
+                return false;
+            }
+        });
+    });
+}
+
+var notifications = [ ];
+function getNotifications(lines) {
+    // XXX allow notifications in last 10 mins
+    var now = moment();
+    var grace = now.clone().subtract(10, 'minutes');
+    _.forEach(lines, function (line) {
+        var list_match = line.match(rgx_list_item);
+        if (!list_match || (!args.x && (list_match[2] === task_complete)))
+            return;
+        var date_match;
+        while ((date_match = rgx_date.exec(line)) !== null) {
+            //cl(`${date_match[0]} -> ${date_match[1]} ${date_match[2]} ${date_match[3]} ${date_match[4]} ${date_match[5]}`);
+
+            var notify;
+
+            /* skip a datetime that has the notify ignore flag */
+            if (date_match[1] && (date_match[1] == '-')) continue;
+
+            /* the datetime has both a date and time or just a date */
+            if (date_match[3])
+                notify = moment(`${date_match[2]} ${date_match[3]}`,
+                                'YYYY-MM-DD HH:mm',
+                                true);
+            else
+                notify = moment(date_match[2],
+                                'YYYY-MM-DD',
+                                true);
+
+            /* if the datetime is in the future then skip it */
+            if (now.isBefore(notify)) continue;
+
+            /* the datetime is in the now grace period */
+            if (grace.isSameOrBefore(notify) && now.isSameOrAfter(notify)) {
+                notifications.push(line);
+                break;
+            }
+
+            /* the datetime has a notify nag flag (every hour or day) */
+            if (date_match[1]) {
+                var nag = (date_match[1] === '*') ? 'h' : 'd';
+                var notify_tmp = notify.clone();
+
+                var added = false;
+                while (now.isAfter(notify_tmp)) {
+
+                    if (grace.isSameOrBefore(notify_tmp) &&
+                        now.isSameOrAfter(notify_tmp)) {
+                        /* the nag datetime is in the now grace period */
+                        notifications.push(line);
+                        added = true;
+                        break;
+                    }
+
+                    notify_tmp.add(1, nag);
+                }
+                if (added) break;
+            }
+
+            /* the datetime is in the past and has a repeat */
+            if (date_match[4] && date_match[5]) {
+                var repeat = date_match[5];
+                if (repeat === 'm') repeat = 'M';
+                var notify_tmp = notify.clone();
+
+                var added = false;
+                while (now.isAfter(notify_tmp)) {
+
+                    if (grace.isSameOrBefore(notify_tmp) &&
+                        now.isSameOrAfter(notify_tmp)) {
+                        /* the repeat datetime is in the now grace period */
+                        notifications.push(line);
+                        added = true;
+                        break;
+                    }
+
+                    notify_tmp.add(date_match[4], repeat);
+                }
+                if (added) break;
+            }
+
+            /* the datetime is outside the notification period */
+        }
+    });
+}
+
+function forEachFile(workFunc, args) {
+    _.forEach(iwgsd, function (f) {
+        if (!fs.existsSync(f))
+            err(`File '${f}' does not exist`);
+        workFunc(fs.readFileSync(f, "utf-8").toString().split(os.EOL), args);
+    });
+}
+
+if (args.L) {
+
+    /* dump a list of all the locations */
+    forEachFile(getLocations);
+    _.forEach(_.uniq(locations.sort()), function (v) { cl(v); });
+
+} else if (args.l) {
+
+    /* filter on a set of locations */
+    forEachFile(filterLocations, _.uniq(_.flatten(args.l)));
+    _.forEach(location_filter, function (v) { cl(v); });
+
+} else if (args.T) {
+
+    /* dump a list of all the tags */
+    forEachFile(getTags);
+    _.forEach(_.uniq(tags.sort()), function (v) { cl(v); });
+
+} else if (args.t) {
+
+    /* filter on a set of tags */
+    forEachFile(filterTags, _.uniq(_.flatten(args.t)));
+    _.forEach(tag_filter, function (v) { cl(v); });
+
+} else if (args.N || args.n) {
+
+    /* list the notifications that would be sent */
+    forEachFile(getNotifications);
+    _.forEach(notifications, function (v) {
+        if (args.N) {
+            cl(v); /* XXX need fancy color output with chalk */
+            return;
+        }
+
+        /* send the notification (XXX individual or single?) */
+        spawn.sync(notification_app, [ v ], { stdio: 'inherit' });
+    });
+
+} else {
+    pargs.error('argument required');
+}
+
