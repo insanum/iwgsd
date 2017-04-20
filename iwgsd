@@ -146,9 +146,9 @@ function filterTags(lines, tags) {
 
 var notifications = [ ];
 function getNotifications(lines) {
-    // XXX allow notifications in last 10 mins
+    // XXX allow notifications in last 30 mins
     var now = moment();
-    var grace = now.clone().subtract(10, 'minutes');
+    var grace = now.clone().subtract(30, 'minutes');
     _.forEach(lines, function (line) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
