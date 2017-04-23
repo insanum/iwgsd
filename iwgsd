@@ -11,10 +11,12 @@ var yaml   = require('js-yaml')
 var chalk  = require('chalk')
 var ap     = require('argparse')
 var moment = require('moment')
+var later  = require('later')
 var spawn  = require('cross-spawn');
 
 var cl  = (msg) => { console.log(msg); };
-var err = (msg) => { cl(chalk.red(`ERROR: ${msg}`)); process.exit(1); }
+var err = (msg, bail=true) => { cl(chalk.red(`ERROR: ${msg}`));
+                                if (bail) process.exit(1); }
 
 var iwgsd_cfg = 'iwgsd.yaml';
 
@@ -90,7 +92,7 @@ var task_complete = '[x]';
 var rgx_list_item = /^\s*([-*+]|\d\.)(?:\s+(\[[ x]\]))?\s+.*$/;
 var rgx_location  = /\s@(\w+)(?=\s|$)/g;
 var rgx_tag       = /\s#(\w+)(?=\s|$)/g;
-var rgx_date      = /\s{(?:([-*+])\s)?(\d{4}-\d{2}-\d{2})(?:\s(\d{2}:\d{2}))?(?:\s\+(\d+)([hdwmy]))?}(?=\s|$)/g;
+var rgx_notify    = /\s{([-+])\s+(.*)}(?=\s|$)/;
 
 var locations = [ ];
 function getLocations(lines) {
@@ -147,84 +149,39 @@ function filterTags(lines, tags) {
 var notifications = [ ];
 function getNotifications(lines) {
     // XXX allow notifications in last 30 mins
-    var now = moment();
+    var now   = moment();
     var grace = now.clone().subtract(30, 'minutes');
+
+    // deal with localtime (not UTC)
+    later.date.localTime();
+
     _.forEach(lines, function (line) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
             return;
-        var date_match;
-        while ((date_match = rgx_date.exec(line)) !== null) {
-            //cl(`${date_match[0]} -> ${date_match[1]} ${date_match[2]} ${date_match[3]} ${date_match[4]} ${date_match[5]}`);
 
-            var notify;
+        notify_match = line.match(rgx_notify);
+        if (!notify_match) return;
 
-            /* skip a datetime that has the notify ignore flag */
-            if (date_match[1] && (date_match[1] == '-')) continue;
+        // skip a notification that has the notify ignore flag set
+        if (notify_match[1] === '-') return;
 
-            /* the datetime has both a date and time or just a date */
-            if (date_match[3])
-                notify = moment(`${date_match[2]} ${date_match[3]}`,
-                                'YYYY-MM-DD HH:mm',
-                                true);
-            else
-                notify = moment(date_match[2],
-                                'YYYY-MM-DD',
-                                true);
+        //cl(`${notify_match[0]} -> ${notify_match[1]} "${notify_match[2]}"`);
 
-            /* if the datetime is in the future then skip it */
-            if (now.isBefore(notify)) continue;
+        var notify = later.parse.text(notify_match[2]);
+        if (notify.error !== -1) {
+            err(`Invalid notification text at index ${notify.error}: ` +
+                `"${notify_match[2]}"`, false);
+            return;
+        }
 
-            /* the datetime is in the now grace period */
-            if (grace.isSameOrBefore(notify) && now.isSameOrAfter(notify)) {
-                notifications.push(line);
-                break;
-            }
-
-            /* the datetime has a notify nag flag (every hour or day) */
-            if (date_match[1]) {
-                var nag = (date_match[1] === '*') ? 'h' : 'd';
-                var notify_tmp = notify.clone();
-
-                var added = false;
-                while (now.isAfter(notify_tmp)) {
-
-                    if (grace.isSameOrBefore(notify_tmp) &&
-                        now.isSameOrAfter(notify_tmp)) {
-                        /* the nag datetime is in the now grace period */
-                        notifications.push(line);
-                        added = true;
-                        break;
-                    }
-
-                    notify_tmp.add(1, nag);
-                }
-                if (added) break;
-            }
-
-            /* the datetime is in the past and has a repeat */
-            if (date_match[4] && date_match[5]) {
-                var repeat = date_match[5];
-                if (repeat === 'm') repeat = 'M';
-                var notify_tmp = notify.clone();
-
-                var added = false;
-                while (now.isAfter(notify_tmp)) {
-
-                    if (grace.isSameOrBefore(notify_tmp) &&
-                        now.isSameOrAfter(notify_tmp)) {
-                        /* the repeat datetime is in the now grace period */
-                        notifications.push(line);
-                        added = true;
-                        break;
-                    }
-
-                    notify_tmp.add(date_match[4], repeat);
-                }
-                if (added) break;
-            }
-
-            /* the datetime is outside the notification period */
+        // if there are schedules in the grace period range then ok
+        var schedules = later.schedule(notify).prev(1,
+                                                    now.toDate(),
+                                                    grace.toDate());
+        if (schedules) {
+            notifications.push(_.trim(line));
+            return;
         }
     });
 }
