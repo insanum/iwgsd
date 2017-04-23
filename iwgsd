@@ -90,9 +90,15 @@ var iwgsd = parseFile(iwgsd_cfg);
 
 var task_complete = '[x]';
 var rgx_list_item = /^\s*([-*+]|\d\.)(?:\s+(\[[ x]\]))?\s+.*$/;
-var rgx_location  = /\s@(\w+)(?=\s|$)/g;
-var rgx_tag       = /\s#(\w+)(?=\s|$)/g;
-var rgx_notify    = /\s{([-+])\s+(.*)}(?=\s|$)/;
+
+var rgx_location     = /\s@(\w+)(?=\s|$)/g;
+var rgx_location_clr = /\s(@\w+)(?=\s|$)/g;
+
+var rgx_tag     = /\s#(\w+)(?=\s|$)/g;
+var rgx_tag_clr = /\s(#\w+)(?=\s|$)/g;
+
+var rgx_notify     = /\s{([-+])\s+(.+)}(?=\s|$)/;
+var rgx_notify_clr = /\s({[-+]\s+.+})(?=\s|$)/;
 
 var locations = [ ];
 function getLocations(lines) {
@@ -194,6 +200,17 @@ function forEachFile(workFunc, args) {
     });
 }
 
+/* pretty print the line with syntax highlights */
+function ppLine(text) {
+    text = text.replace(rgx_location_clr,
+                        ` ${chalk.yellow.bgBlack.bold('$1')}`);
+    text = text.replace(rgx_tag_clr,
+                        ` ${chalk.blue.bgBlack.bold('$1')}`);
+    text = text.replace(rgx_notify_clr,
+                        ` ${chalk.green.bgBlack.bold('$1')}`);
+    cl(text);
+}
+
 if (args.L) {
 
     /* dump a list of all the locations */
@@ -204,7 +221,7 @@ if (args.L) {
 
     /* filter on a set of locations */
     forEachFile(filterLocations, _.uniq(_.flatten(args.l)));
-    _.forEach(location_filter, function (v) { cl(v); });
+    _.forEach(location_filter, ppLine);
 
 } else if (args.T) {
 
@@ -216,7 +233,7 @@ if (args.L) {
 
     /* filter on a set of tags */
     forEachFile(filterTags, _.uniq(_.flatten(args.t)));
-    _.forEach(tag_filter, function (v) { cl(v); });
+    _.forEach(tag_filter, ppLine);
 
 } else if (args.N || args.n) {
 
@@ -224,7 +241,7 @@ if (args.L) {
     forEachFile(getNotifications);
     _.forEach(notifications, function (v) {
         if (args.N) {
-            cl(v); /* XXX need fancy color output with chalk */
+            ppLine(v);
             return;
         }
 
