@@ -113,13 +113,13 @@ function getLocations(lines) {
 
 var location_filter = [ ];
 function filterLocations(lines, locations) {
-    _.forEach(lines, function (line) {
+    _.forEach(lines, function (line, k) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
             return;
         _.forEach(locations, function (loc) {
             if (line.match(RegExp(`\\s@${loc}(\\b|$)`))) {
-                location_filter.push(_.trim(line));
+                location_filter.push(`${k+1}:${_.trim(line)}`);
                 return false;
             }
         });
@@ -139,13 +139,13 @@ function getTags(lines) {
 
 var tag_filter = [ ];
 function filterTags(lines, tags) {
-    _.forEach(lines, function (line) {
+    _.forEach(lines, function (line, k) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
             return;
         _.forEach(tags, function (tag) {
             if (line.match(RegExp(`\\s#${tag}(\\b|$)`))) {
-                tag_filter.push(_.trim(line));
+                tag_filter.push(`${k+1}:${_.trim(line)}`);
                 return false;
             }
         });
@@ -161,7 +161,7 @@ function getNotifications(lines) {
     // deal with localtime (not UTC)
     later.date.localTime();
 
-    _.forEach(lines, function (line) {
+    _.forEach(lines, function (line, k) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
             return;
@@ -186,7 +186,7 @@ function getNotifications(lines) {
                                                     now.toDate(),
                                                     grace.toDate());
         if (schedules) {
-            notifications.push(_.trim(line));
+            notifications.push(`${k+1}:${_.trim(line)}`);
             return;
         }
     });
