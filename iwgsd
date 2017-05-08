@@ -190,12 +190,25 @@ function getNotifications(lines, file) {
             return;
         }
 
-        // XXX for #remind tags notify daily starting one week before
-        /*
+        // for #remind tags notify daily starting one week before
         if (line.match(RegExp(`\\s#remind(\\b|$)`))) {
-            cl(`foobar ${line}`);
+            var tfmt = 'HH:mm';
+
+            var next_instance = later.schedule(notify).next(1, now.toDate());
+            if (!next_instance) {
+                err(`Invalid notification schedule for next instance ${file}:${k+1}`,
+                    false);
+                return;
+            }
+
+            var time = moment(next_instance).format(tfmt);
+            if (moment(time, tfmt).isBetween(moment(grace.format(tfmt), tfmt),
+                                             moment(now.format(tfmt), tfmt),
+                                             null, '(]')) {
+                notifications.push(`${file}:${k+1}:${_.trim(line)}`);
+                return;
+            }
         }
-        */
     });
 }
 
