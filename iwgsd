@@ -101,7 +101,7 @@ var rgx_notify     = /\s{([-+])\s+(.+)}(?=\s|$)/;
 var rgx_notify_clr = /\s({[-+]\s+.+})(?=\s|$)/;
 
 var locations = [ ];
-function getLocations(lines) {
+function getLocations(lines, file) {
     _.forEach(lines, function (line) {
         if (!line.match(rgx_list_item)) return;
         var loc_match;
@@ -112,14 +112,14 @@ function getLocations(lines) {
 }
 
 var location_filter = [ ];
-function filterLocations(lines, locations) {
+function filterLocations(lines, file, locations) {
     _.forEach(lines, function (line, k) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
             return;
         _.forEach(locations, function (loc) {
             if (line.match(RegExp(`\\s@${loc}(\\b|$)`))) {
-                location_filter.push(`${k+1}:${_.trim(line)}`);
+                location_filter.push(`${file}:${k+1}:${_.trim(line)}`);
                 return false;
             }
         });
@@ -127,7 +127,7 @@ function filterLocations(lines, locations) {
 }
 
 var tags = [ ];
-function getTags(lines) {
+function getTags(lines, file) {
     _.forEach(lines, function (line) {
         if (!line.match(rgx_list_item)) return;
         var tag_match;
@@ -138,14 +138,14 @@ function getTags(lines) {
 }
 
 var tag_filter = [ ];
-function filterTags(lines, tags) {
+function filterTags(lines, file, tags) {
     _.forEach(lines, function (line, k) {
         var list_match = line.match(rgx_list_item);
         if (!list_match || (!args.x && (list_match[2] === task_complete)))
             return;
         _.forEach(tags, function (tag) {
             if (line.match(RegExp(`\\s#${tag}(\\b|$)`))) {
-                tag_filter.push(`${k+1}:${_.trim(line)}`);
+                tag_filter.push(`${file}:${k+1}:${_.trim(line)}`);
                 return false;
             }
         });
@@ -153,8 +153,8 @@ function filterTags(lines, tags) {
 }
 
 var notifications = [ ];
-function getNotifications(lines) {
-    // XXX allow notifications in last 30 mins
+function getNotifications(lines, file) {
+    // XXX allow notifications in last 30 mins (assumed cronjob interval)
     var now   = moment();
     var grace = now.clone().subtract(30, 'minutes');
 
@@ -186,9 +186,16 @@ function getNotifications(lines) {
                                                     now.toDate(),
                                                     grace.toDate());
         if (schedules) {
-            notifications.push(`${k+1}:${_.trim(line)}`);
+            notifications.push(`${file}:${k+1}:${_.trim(line)}`);
             return;
         }
+
+        // XXX for #remind tags notify daily starting one week before
+        /*
+        if (line.match(RegExp(`\\s#remind(\\b|$)`))) {
+            cl(`foobar ${line}`);
+        }
+        */
     });
 }
 
@@ -196,7 +203,7 @@ function forEachFile(workFunc, args) {
     _.forEach(iwgsd, function (f) {
         if (!fs.existsSync(f))
             err(`File '${f}' does not exist`);
-        workFunc(fs.readFileSync(f, "utf-8").toString().split(os.EOL), args);
+        workFunc(fs.readFileSync(f, "utf-8").toString().split(os.EOL), f, args);
     });
 }
 
