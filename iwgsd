@@ -201,6 +201,12 @@ function getNotifications(lines, file) {
                 return;
             }
 
+            /* check if we're in the reminder window of the next schedule */
+            if (moment(next_instance).subtract(7, 'days').isAfter(now)) {
+                return;
+            }
+
+            /* check if the time of the next schedule is in this grace period */
             var time = moment(next_instance).format(tfmt);
             if (moment(time, tfmt).isBetween(moment(grace.format(tfmt), tfmt),
                                              moment(now.format(tfmt), tfmt),
